@@ -456,7 +456,6 @@
 </head>
 <body>
 
-<!-- 自定义光标 -->
 <div id="customCursor">
     <div class="motion-lines"></div>
     <svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
@@ -500,7 +499,6 @@
     <div class="tennis-ball" id="tennisBall"></div>
     <div class="target-layer" id="targetLayer"></div>
 
-    <!-- 击球文字提示 -->
     <div class="hit-text" id="hitText">🏏 击球！</div>
 
     <div class="ui-container">
@@ -673,17 +671,21 @@
         let isWaitingForHover = false;
         let isFiring = false;
         let isHitAnimating = false;
+        let isWaitingForClick = false;
+        let clickTargetIndex = -1;
         let score = 0;
         let timeLeft = 30;
         let timerInterval = null;
         let lightTimeout = null;
         let roundTimeout = null;
+        let clickTimeout = null;
         let ballAnimId = null;
         let hitAnimId = null;
         let hoverCheckInterval = null;
         let audioCtx = null;
 
         const ROUND_TIMEOUT = 4000;
+        const CLICK_TIMEOUT = 4000;
 
         function initAudio() {
             if (!audioCtx) {
@@ -745,6 +747,40 @@
         }
 
         // ================================================================
+        // 全局点击处理 - 任意位置点击触发击球
+        // ================================================================
+        function handleGlobalClick(e) {
+            // 忽略按钮点击
+            if (e.target.closest('.btn-start')) return;
+            
+            if (!isGameActive || !isWaitingForClick || isFiring || isHitAnimating) {
+                playBeep(300, 50);
+                return;
+            }
+            
+            // 触发击球！
+            playClick();
+            isWaitingForClick = false;
+            isFiring = true;
+            
+            if (clickTimeout) {
+                clearTimeout(clickTimeout);
+                clickTimeout = null;
+            }
+            
+            const pos = DOT_POSITIONS[clickTargetIndex];
+            statusDisplay.textContent = '🏏 击球！';
+            statusDisplay.className = 'status-area highlight';
+            
+            // 触发击球动画（从灯光位置向发球机方向）
+            setTimeout(() => {
+                if (isGameActive) {
+                    playHitAnimation(pos.x, pos.y);
+                }
+            }, 200);
+        }
+
+        // ================================================================
         // 击球动画
         // ================================================================
         function playHitAnimation(ballX, ballY) {
@@ -752,7 +788,6 @@
             isHitAnimating = true;
 
             showHitText(ballX, ballY);
-
             triggerHitAnimation();
             playBeep(600, 80, 'square');
             playBeep(900, 60, 'square');
@@ -800,6 +835,11 @@
                         ctx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
                         isHitAnimating = false;
                         isFiring = false;
+                        // 击球得分
+                        score += 2;
+                        scoreSpan.textContent = score;
+                        statusDisplay.textContent = '💥 击球得分 +2';
+                        statusDisplay.className = 'status-area highlight';
                         if (isGameActive) {
                             scheduleNextLight(2000);
                         }
@@ -838,163 +878,8 @@
         }
 
         // ================================================================
-        // 悬停检测
+        // 发球机发球
         // ================================================================
-        function startHoverDetection() {
-            if (hoverCheckInterval) {
-                clearInterval(hoverCheckInterval);
-            }
-            hoverCheckInterval = setInterval(() => {
-                if (!isGameActive || isFiring || !isWaitingForHover || currentTargetIndex < 0) {
-                    return;
-                }
-                const pos = DOT_POSITIONS[currentTargetIndex];
-                const rect = scene.getBoundingClientRect();
-                const scaleX = scene.clientWidth / rect.width;
-                const scaleY = scene.clientHeight / rect.height;
-                const sceneX = (cursorX - rect.left) * scaleX;
-                const sceneY = (cursorY - rect.top) * scaleY;
-                
-                if (isCursorOverlappingDot(sceneX, sceneY, pos.x, pos.y, pos.r)) {
-                    triggerArrived(currentTargetIndex);
-                }
-            }, 50);
-        }
-
-        function stopHoverDetection() {
-            if (hoverCheckInterval) {
-                clearInterval(hoverCheckInterval);
-                hoverCheckInterval = null;
-            }
-        }
-
-        // ================================================================
-        // 超时处理
-        // ================================================================
-        function handleRoundTimeout() {
-            if (!isGameActive || !isWaitingForHover || currentTargetIndex < 0) return;
-            
-            isWaitingForHover = false;
-            stopHoverDetection();
-            
-            const dot = dotElements[currentTargetIndex];
-            if (dot) {
-                dot.className = 'target-dot timeout';
-                dot.style.animation = 'none';
-            }
-            
-            arrowIndicator.className = 'arrow-indicator';
-            statusDisplay.textContent = '⏰ 超时！未到位';
-            statusDisplay.className = 'status-area fail';
-            playFail();
-            
-            if (roundTimeout) {
-                clearTimeout(roundTimeout);
-                roundTimeout = null;
-            }
-            
-            setTimeout(() => {
-                if (isGameActive && !isFiring && !isHitAnimating) {
-                    resetDots();
-                    isFiring = false;
-                    scheduleNextLight(2000);
-                }
-            }, 1500);
-        }
-
-        // ================================================================
-        // 触发到位
-        // ================================================================
-        function triggerArrived(index) {
-            if (!isGameActive || isFiring || !isWaitingForHover) return;
-            if (index !== currentTargetIndex) return;
-            
-            if (roundTimeout) {
-                clearTimeout(roundTimeout);
-                roundTimeout = null;
-            }
-            
-            playClick();
-            isWaitingForHover = false;
-            isFiring = true;
-            stopHoverDetection();
-
-            const dot = dotElements[index];
-            dot.className = 'target-dot arrived';
-            dot.style.animation = 'none';
-            arrowIndicator.className = 'arrow-indicator';
-
-            statusDisplay.textContent = '✅ 到位！发球...';
-            statusDisplay.className = 'status-area highlight';
-            playSuccess();
-
-            score += 2;
-            scoreSpan.textContent = score;
-
-            setTimeout(() => {
-                if (isGameActive) {
-                    fireBall(index);
-                }
-            }, 350);
-        }
-
-        // ================================================================
-        // 灯光与发球
-        // ================================================================
-        function lightRandomDot() {
-            if (!isGameActive || isFiring || isWaitingForHover || isHitAnimating) {
-                scheduleNextLight(500);
-                return;
-            }
-
-            resetDots();
-
-            const allIndices = Array.from({ length: DOT_POSITIONS.length }, (_, i) => i);
-            const randIdx = allIndices[Math.floor(Math.random() * allIndices.length)];
-            currentTargetIndex = randIdx;
-
-            const dot = dotElements[randIdx];
-            dot.className = 'target-dot active';
-            dot.style.animation = 'none';
-            void dot.offsetHeight;
-            dot.style.animation = 'pulse-red 0.8s infinite alternate';
-
-            const pos = DOT_POSITIONS[randIdx];
-            arrowIndicator.style.left = pos.x + 'px';
-            arrowIndicator.style.top = (pos.y - 50) + 'px';
-            arrowIndicator.className = 'arrow-indicator show';
-
-            statusDisplay.textContent = '🎯 移动到此处';
-            statusDisplay.className = 'status-area highlight';
-            isWaitingForHover = true;
-
-            startHoverDetection();
-            playBeep(500, 60);
-
-            if (roundTimeout) {
-                clearTimeout(roundTimeout);
-            }
-            roundTimeout = setTimeout(() => {
-                handleRoundTimeout();
-            }, ROUND_TIMEOUT);
-        }
-
-        function scheduleNextLight(delay = 2000) {
-            if (lightTimeout) {
-                clearTimeout(lightTimeout);
-                lightTimeout = null;
-            }
-            if (!isGameActive) return;
-            lightTimeout = setTimeout(() => {
-                lightTimeout = null;
-                if (isGameActive && !isFiring && !isWaitingForHover && !isHitAnimating) {
-                    lightRandomDot();
-                } else {
-                    scheduleNextLight(500);
-                }
-            }, delay);
-        }
-
         function fireBall(targetIndex) {
             const pos = DOT_POSITIONS[targetIndex];
             const startX = 400, startY = 75;
@@ -1043,52 +928,52 @@
                     tennisBall.style.left = p.x + 'px';
                     tennisBall.style.top = p.y + 'px';
 
-                    score += 2;
-                    scoreSpan.textContent = score;
-
+                    machine.classList.remove('firing');
+                    
+                    // 灯泡保持绿色，但不再闪烁
                     const dot = dotElements[targetIndex];
                     if (dot) {
+                        dot.className = 'target-dot arrived';
                         dot.style.animation = 'none';
-                        void dot.offsetHeight;
-                        dot.style.animation = 'pulse-red 0.2s 3';
-                        setTimeout(() => {
-                            dot.style.animation = 'none';
-                            dot.className = 'target-dot arrived';
-                        }, 400);
                     }
-
-                    machine.classList.remove('firing');
-                    statusDisplay.textContent = '💥 得分 +2';
+                    
+                    // 进入点击等待状态 - 任意位置点击触发击球
+                    statusDisplay.textContent = '🖱️ 任意位置点击击球！';
                     statusDisplay.className = 'status-area highlight';
-
+                    
+                    // 清除发球轨迹
                     setTimeout(() => {
                         ctx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
                     }, 300);
 
-                    const rect = scene.getBoundingClientRect();
-                    const scaleX = scene.clientWidth / rect.width;
-                    const scaleY = scene.clientHeight / rect.height;
-                    const sceneX = (cursorX - rect.left) * scaleX;
-                    const sceneY = (cursorY - rect.top) * scaleY;
-                    const isCursorOnDot = isCursorOverlappingDot(sceneX, sceneY, pos.x, pos.y, pos.r);
+                    isWaitingForClick = true;
+                    clickTargetIndex = targetIndex;
+                    isFiring = false;
 
-                    if (isCursorOnDot && isGameActive) {
-                        statusDisplay.textContent = '🏏 击球！';
-                        statusDisplay.className = 'status-area highlight';
-                        setTimeout(() => {
-                            if (isGameActive) {
-                                playHitAnimation(pos.x, pos.y);
-                            }
-                        }, 300);
-                    } else {
-                        setTimeout(() => {
-                            tennisBall.style.display = 'none';
-                            isFiring = false;
-                            if (isGameActive) {
-                                scheduleNextLight(2000);
-                            }
-                        }, 600);
+                    // 设置点击超时
+                    if (clickTimeout) {
+                        clearTimeout(clickTimeout);
                     }
+                    clickTimeout = setTimeout(() => {
+                        if (isGameActive && isWaitingForClick) {
+                            // 点击超时，不得击球分
+                            isWaitingForClick = false;
+                            const dot2 = dotElements[targetIndex];
+                            if (dot2) {
+                                dot2.className = 'target-dot timeout';
+                                dot2.style.animation = 'none';
+                            }
+                            statusDisplay.textContent = '⏰ 未击球！';
+                            statusDisplay.className = 'status-area fail';
+                            playFail();
+                            setTimeout(() => {
+                                if (isGameActive && !isFiring && !isHitAnimating) {
+                                    resetDots();
+                                    scheduleNextLight(2000);
+                                }
+                            }, 1500);
+                        }
+                    }, CLICK_TIMEOUT);
 
                     ballAnimId = null;
                     return;
@@ -1105,6 +990,164 @@
                 ballAnimId = requestAnimationFrame(animateBall);
             }
             ballAnimId = requestAnimationFrame(animateBall);
+        }
+
+        // ================================================================
+        // 悬停检测
+        // ================================================================
+        function startHoverDetection() {
+            if (hoverCheckInterval) {
+                clearInterval(hoverCheckInterval);
+            }
+            hoverCheckInterval = setInterval(() => {
+                if (!isGameActive || isFiring || !isWaitingForHover || currentTargetIndex < 0) {
+                    return;
+                }
+                const pos = DOT_POSITIONS[currentTargetIndex];
+                const rect = scene.getBoundingClientRect();
+                const scaleX = scene.clientWidth / rect.width;
+                const scaleY = scene.clientHeight / rect.height;
+                const sceneX = (cursorX - rect.left) * scaleX;
+                const sceneY = (cursorY - rect.top) * scaleY;
+                
+                if (isCursorOverlappingDot(sceneX, sceneY, pos.x, pos.y, pos.r)) {
+                    triggerArrived(currentTargetIndex);
+                }
+            }, 50);
+        }
+
+        function stopHoverDetection() {
+            if (hoverCheckInterval) {
+                clearInterval(hoverCheckInterval);
+                hoverCheckInterval = null;
+            }
+        }
+
+        // ================================================================
+        // 超时处理 (悬停超时)
+        // ================================================================
+        function handleRoundTimeout() {
+            if (!isGameActive || !isWaitingForHover || currentTargetIndex < 0) return;
+            
+            isWaitingForHover = false;
+            stopHoverDetection();
+            
+            const dot = dotElements[currentTargetIndex];
+            if (dot) {
+                dot.className = 'target-dot timeout';
+                dot.style.animation = 'none';
+            }
+            
+            arrowIndicator.className = 'arrow-indicator';
+            statusDisplay.textContent = '⏰ 超时！未到位';
+            statusDisplay.className = 'status-area fail';
+            playFail();
+            
+            if (roundTimeout) {
+                clearTimeout(roundTimeout);
+                roundTimeout = null;
+            }
+            
+            setTimeout(() => {
+                if (isGameActive && !isFiring && !isHitAnimating && !isWaitingForClick) {
+                    resetDots();
+                    scheduleNextLight(2000);
+                }
+            }, 1500);
+        }
+
+        // ================================================================
+        // 触发到位 (悬停触发)
+        // ================================================================
+        function triggerArrived(index) {
+            if (!isGameActive || isFiring || !isWaitingForHover) return;
+            if (index !== currentTargetIndex) return;
+            
+            if (roundTimeout) {
+                clearTimeout(roundTimeout);
+                roundTimeout = null;
+            }
+            
+            playClick();
+            isWaitingForHover = false;
+            stopHoverDetection();
+
+            const dot = dotElements[index];
+            dot.className = 'target-dot arrived';
+            dot.style.animation = 'none';
+            arrowIndicator.className = 'arrow-indicator';
+
+            // 到位得分
+            score += 2;
+            scoreSpan.textContent = score;
+            
+            statusDisplay.textContent = '✅ 到位！发球...';
+            statusDisplay.className = 'status-area highlight';
+
+            // 开始发球
+            isFiring = true;
+            setTimeout(() => {
+                if (isGameActive) {
+                    fireBall(index);
+                }
+            }, 400);
+        }
+
+        // ================================================================
+        // 灯光控制
+        // ================================================================
+        function lightRandomDot() {
+            if (!isGameActive || isFiring || isWaitingForHover || isHitAnimating || isWaitingForClick) {
+                scheduleNextLight(500);
+                return;
+            }
+
+            resetDots();
+
+            const allIndices = Array.from({ length: DOT_POSITIONS.length }, (_, i) => i);
+            const randIdx = allIndices[Math.floor(Math.random() * allIndices.length)];
+            currentTargetIndex = randIdx;
+
+            const dot = dotElements[randIdx];
+            dot.className = 'target-dot active';
+            dot.style.animation = 'none';
+            void dot.offsetHeight;
+            dot.style.animation = 'pulse-red 0.8s infinite alternate';
+
+            const pos = DOT_POSITIONS[randIdx];
+            arrowIndicator.style.left = pos.x + 'px';
+            arrowIndicator.style.top = (pos.y - 50) + 'px';
+            arrowIndicator.className = 'arrow-indicator show';
+
+            statusDisplay.textContent = '🎯 移动到此处';
+            statusDisplay.className = 'status-area highlight';
+            isWaitingForHover = true;
+
+            startHoverDetection();
+            playBeep(500, 60);
+
+            if (roundTimeout) {
+                clearTimeout(roundTimeout);
+            }
+            roundTimeout = setTimeout(() => {
+                handleRoundTimeout();
+            }, ROUND_TIMEOUT);
+        }
+
+        function scheduleNextLight(delay = 2000) {
+            if (lightTimeout) {
+                clearTimeout(lightTimeout);
+                lightTimeout = null;
+            }
+            if (!isGameActive) return;
+            lightTimeout = setTimeout(() => {
+                lightTimeout = null;
+                if (isGameActive && !isFiring && !isWaitingForHover && !isHitAnimating && !isWaitingForClick) {
+                    lightRandomDot();
+                } else {
+                    scheduleNextLight(500);
+                }
+            }, delay);
         }
 
         // ================================================================
@@ -1133,6 +1176,8 @@
             isFiring = false;
             isWaitingForHover = false;
             isHitAnimating = false;
+            isWaitingForClick = false;
+            clickTargetIndex = -1;
             score = 0;
             scoreSpan.textContent = '0';
             btnStart.textContent = '🔄 重置';
@@ -1150,6 +1195,9 @@
             machine.classList.remove('firing');
             ctx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
 
+            // 注册全局点击事件
+            document.addEventListener('click', handleGlobalClick);
+
             startTimer();
 
             setTimeout(() => {
@@ -1164,10 +1212,16 @@
             isFiring = false;
             isWaitingForHover = false;
             isHitAnimating = false;
+            isWaitingForClick = false;
             stopHoverDetection();
+            document.removeEventListener('click', handleGlobalClick);
             if (roundTimeout) {
                 clearTimeout(roundTimeout);
                 roundTimeout = null;
+            }
+            if (clickTimeout) {
+                clearTimeout(clickTimeout);
+                clickTimeout = null;
             }
             if (timerInterval) clearInterval(timerInterval);
             if (lightTimeout) {
@@ -1198,10 +1252,17 @@
             isFiring = false;
             isWaitingForHover = false;
             isHitAnimating = false;
+            isWaitingForClick = false;
+            clickTargetIndex = -1;
             stopHoverDetection();
+            document.removeEventListener('click', handleGlobalClick);
             if (roundTimeout) {
                 clearTimeout(roundTimeout);
                 roundTimeout = null;
+            }
+            if (clickTimeout) {
+                clearTimeout(clickTimeout);
+                clickTimeout = null;
             }
             if (timerInterval) clearInterval(timerInterval);
             if (lightTimeout) {
